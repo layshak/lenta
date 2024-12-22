@@ -1,0 +1,104 @@
+#include <util/delay.h>
+
+/* Указываем пины ШИМ и энкодера */
+#define R_PWM_PIN   5   // ШИМ пин для красного канала
+#define G_PWM_PIN   3   // ШИМ пин для зеленого канала
+#define B_PWM_PIN   6   // ШИМ пин для синего канала
+#define L_PIN       2   // Пин энкодера (вращение влево)
+#define R_PIN       7   // Пин энкодера (вращение вправо)
+#define BUTTON_PIN  4   // Пин кнопки
+
+/* Переменные */
+uint8_t r_pwm = 0, g_pwm = 0, b_pwm = 0; // RGB компоненты
+uint8_t brightness = 255;               // Яркость (0 - 255)
+int8_t color = 0;                       // Переменная цвета (оттенок)
+bool isColorMode = true;                // Режим управления: true - цвет, false - яркость
+
+void setup() {
+  /* Настраиваем пины */
+  pinMode(R_PWM_PIN, OUTPUT);
+  pinMode(G_PWM_PIN, OUTPUT);
+  pinMode(B_PWM_PIN, OUTPUT);
+  pinMode(L_PIN, INPUT_PULLUP);
+  pinMode(R_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  /* Устанавливаем частоту ШИМ на 16 кГц */
+  TCCR0B = (TCCR0B & 0b11111000) | 1;
+  TCCR1 = (TCCR1 & 0b11110000) | 1;
+}
+
+void loop() {
+  // Проверка нажатия кнопки для переключения режима
+  if (digitalRead(BUTTON_PIN) == LOW) {
+    _delay_ms(50); // Антидребезг
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      isColorMode = !isColorMode; // Переключаем режим
+      while (digitalRead(BUTTON_PIN) == LOW); // Ждём отпускания кнопки
+    }
+  }
+
+  // Обработка энкодера
+  static uint8_t prevL = HIGH, prevR = HIGH;
+  uint8_t currentL = digitalRead(L_PIN);
+  uint8_t currentR = digitalRead(R_PIN);
+
+  if (prevL == HIGH && currentL == LOW) { // Левое движение энкодера
+    if (digitalRead(R_PIN) == HIGH) {
+      if (isColorMode) {
+        color--; // Уменьшаем цвет
+      } else {
+        brightness = max(brightness - 10, 0); // Уменьшаем яркость
+      }
+    } else {
+      if (isColorMode) {
+        color++; // Увеличиваем цвет
+      } else {
+        brightness = min(brightness + 10, 255); // Увеличиваем яркость
+      }
+    }
+  }
+  prevL = currentL;
+  prevR = currentR;
+
+  // Ограничение диапазона цвета
+  color = (color + 255) % 255;
+
+  // Генерация цвета
+  makeColor(color);
+  makeBright(brightness);
+
+  // Вывод RGB на ШИМ
+  analogWrite(R_PWM_PIN, r_pwm);
+  analogWrite(G_PWM_PIN, g_pwm);
+  analogWrite(B_PWM_PIN, b_pwm);
+
+  _delay_ms(20); // Задержка
+}
+
+void makeColor(uint8_t color) {
+  uint8_t shift = 0; // Сдвиг цвета
+
+  if (color > 170) { // Синий → фиолетовый → красный
+    shift = (color - 170) * 3;
+    r_pwm = shift;
+    g_pwm = 0;
+    b_pwm = 255 - shift;
+  } else if (color > 85) { // Зеленый → голубой → синий
+    shift = (color - 85) * 3;
+    r_pwm = 0;
+    g_pwm = 255 - shift;
+    b_pwm = shift;
+  } else { // Красный → оранжевый → зеленый
+    shift = color * 3;
+    r_pwm = 255 - shift;
+    g_pwm = shift;
+    b_pwm = 0;
+  }
+}
+
+void makeBright(uint8_t brig) { // Применяем яркость на компоненты RGB
+  r_pwm = ((uint16_t)r_pwm * brig) >> 8;
+  g_pwm = ((uint16_t)g_pwm * brig) >> 8;
+  b_pwm = ((uint16_t)b_pwm * brig) >> 8;
+}
