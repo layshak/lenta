@@ -1,104 +1,77 @@
-#include <util/delay.h>
-
-/* Указываем пины ШИМ и энкодера */
-#define R_PWM_PIN   5   // ШИМ пин для красного канала
-#define G_PWM_PIN   3   // ШИМ пин для зеленого канала
-#define B_PWM_PIN   6   // ШИМ пин для синего канала
-#define L_PIN       2   // Пин энкодера (вращение влево)
-#define R_PIN       7   // Пин энкодера (вращение вправо)
-#define BUTTON_PIN  4   // Пин кнопки
-
-/* Переменные */
-uint8_t r_pwm = 0, g_pwm = 0, b_pwm = 0; // RGB компоненты
-uint8_t brightness = 255;               // Яркость (0 - 255)
-int8_t color = 0;                       // Переменная цвета (оттенок)
-bool isColorMode = true;                // Режим управления: true - цвет, false - яркость
-
-void setup() {
-  /* Настраиваем пины */
-  pinMode(R_PWM_PIN, OUTPUT);
-  pinMode(G_PWM_PIN, OUTPUT);
-  pinMode(B_PWM_PIN, OUTPUT);
-  pinMode(L_PIN, INPUT_PULLUP);
-  pinMode(R_PIN, INPUT_PULLUP);
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
-
-  /* Устанавливаем частоту ШИМ на 16 кГц */
-  TCCR0B = (TCCR0B & 0b11111000) | 1;
-  TCCR1 = (TCCR1 & 0b11110000) | 1;
-}
-
-void loop() {
-  // Проверка нажатия кнопки для переключения режима
-  if (digitalRead(BUTTON_PIN) == LOW) {
-    _delay_ms(50); // Антидребезг
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      isColorMode = !isColorMode; // Переключаем режим
-      while (digitalRead(BUTTON_PIN) == LOW); // Ждём отпускания кнопки
-    }
-  }
-
-  // Обработка энкодера
-  static uint8_t prevL = HIGH, prevR = HIGH;
-  uint8_t currentL = digitalRead(L_PIN);
-  uint8_t currentR = digitalRead(R_PIN);
-
-  if (prevL == HIGH && currentL == LOW) { // Левое движение энкодера
-    if (digitalRead(R_PIN) == HIGH) {
-      if (isColorMode) {
-        color--; // Уменьшаем цвет
-      } else {
-        brightness = max(brightness - 10, 0); // Уменьшаем яркость
-      }
-    } else {
-      if (isColorMode) {
-        color++; // Увеличиваем цвет
-      } else {
-        brightness = min(brightness + 10, 255); // Увеличиваем яркость
-      }
-    }
-  }
-  prevL = currentL;
-  prevR = currentR;
-
-  // Ограничение диапазона цвета
-  color = (color + 255) % 255;
-
-  // Генерация цвета
-  makeColor(color);
-  makeBright(brightness);
-
-  // Вывод RGB на ШИМ
-  analogWrite(R_PWM_PIN, r_pwm);
-  analogWrite(G_PWM_PIN, g_pwm);
-  analogWrite(B_PWM_PIN, b_pwm);
-
-  _delay_ms(20); // Задержка
-}
-
-void makeColor(uint8_t color) {
-  uint8_t shift = 0; // Сдвиг цвета
-
-  if (color > 170) { // Синий → фиолетовый → красный
-    shift = (color - 170) * 3;
-    r_pwm = shift;
-    g_pwm = 0;
-    b_pwm = 255 - shift;
-  } else if (color > 85) { // Зеленый → голубой → синий
-    shift = (color - 85) * 3;
-    r_pwm = 0;
-    g_pwm = 255 - shift;
-    b_pwm = shift;
-  } else { // Красный → оранжевый → зеленый
-    shift = color * 3;
-    r_pwm = 255 - shift;
-    g_pwm = shift;
-    b_pwm = 0;
-  }
-}
-
-void makeBright(uint8_t brig) { // Применяем яркость на компоненты RGB
-  r_pwm = ((uint16_t)r_pwm * brig) >> 8;
-  g_pwm = ((uint16_t)g_pwm * brig) >> 8;
-  b_pwm = ((uint16_t)b_pwm * brig) >> 8;
+#include <GyverRGB.h> 
+#include <GyverEncoder.h> 
+ 
+// Пины подключения RGB-ленты 
+#define PIN_R 9 
+#define PIN_G 10 
+#define PIN_B 3 
+ 
+// Пины энкодера 
+#define CLK 4 
+#define DT 5 
+#define SW 6 
+ 
+Encoder enc(CLK, DT, SW); // Инициализация энкодера 
+GRGB strip(PIN_R, PIN_G, PIN_B); // Инициализация RGB-ленты 
+ 
+// Глобальные переменные 
+uint8_t mode = 0;          // Текущий режим: 0 - цвет, 1 - яркость, 2 - цветовое колесо, 3 - управление яркостью 
+uint16_t hue = 0;          // Текущий оттенок (0-360) 
+uint8_t brightness = 128;  // Текущая яркость (0-255) 
+uint32_t lastUpdate = 0;   // Время последнего обновления цвета в режиме 3 
+const uint16_t wheelSpeed = 50; // Интервал обновления цвета (мс) для режима 3 
+ 
+void setup() { 
+  strip.setBrightness(brightness);   // Устанавливаем начальную яркость 
+  strip.setHSV(hue, 255, brightness); // Устанавливаем начальный цвет 
+  enc.setType(TYPE2); // Устанавливаем тип энкодера 
+} 
+ 
+void loop() { 
+  enc.tick(); // Опрос энкодера 
+ 
+  // Переключение режима при нажатии кнопки 
+  if (enc.isClick()) { 
+    mode = (mode + 1) % 4; // Переключаем режим (0, 1, 2, 3) 
+  } 
+ 
+  // Управление параметрами в зависимости от режима 
+  if (enc.isTurn()) { 
+    if (mode == 0) { 
+      // Режим 0: круговое колесо цвета вручную 
+      if (enc.isRight()) { 
+        hue = (hue + 5) % 360; // Увеличиваем оттенок 
+      } else if (enc.isLeft()) { 
+        hue = (hue + 360 - 5) % 360; // Уменьшаем оттенок 
+      } 
+      strip.setHSV(hue, 255, brightness); 
+    } else if (mode == 1) { 
+      // Режим 1: регулировка яркости 
+      if (enc.isRight()) { 
+        brightness = min(brightness + 5, 255); 
+      } else if (enc.isLeft()) { 
+        brightness = max(brightness - 5, 0); 
+      } 
+      strip.setBrightness(brightness); 
+      strip.setHSV(hue, 255, brightness); 
+    } else if (mode == 3) { 
+      // Режим 3: регулировка яркости вручную (аналог режима 1) 
+      if (enc.isRight()) { 
+        brightness = min(brightness + 5, 255); 
+      } else if (enc.isLeft()) { 
+        brightness = max(brightness - 5, 0); 
+      } 
+      strip.setBrightness(brightness); 
+    } 
+  } 
+ 
+  // Режим 2: цветовое колесо с постоянной скоростью 
+  if (mode == 2) { 
+    uint32_t currentTime = millis(); 
+    if (currentTime - lastUpdate >= wheelSpeed) { 
+      lastUpdate = currentTime; 
+      hue = (hue + 1) % 360; // Постепенное увеличение оттенка 
+      strip.setHSV(hue, 255, brightness); 
+    } 
+  } 
 }
